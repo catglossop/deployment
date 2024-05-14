@@ -1,0 +1,6 @@
+[console_scripts]
+create_topomap_node = deployment.hierarchical_learning.create_topomap:main
+low_level_policy = deployment.hierarchical_learning.low_level_policy:main
+pd_controller_node = deployment.hierarchical_learning.pd_controller:main
+teleop_utils_node = deployment.teleop_utils:main
+
