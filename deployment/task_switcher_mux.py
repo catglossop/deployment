@@ -3,7 +3,7 @@ import numpy as np
 import math
 import threading
 from rclpy.node import Node 
-from sensor_msgs.msg import BatteryState, Joy
+from sensor_msgs.msg import BatteryState, Joy, Imu
 from std_msgs.msg import String, Bool
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose, Twist, PoseStamped, TransformStamped, Quaternion
@@ -16,7 +16,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from tf2_ros import TransformBroadcaster, TransformException
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
-
 
 class TaskSwitcher(Node):
 
@@ -38,6 +37,9 @@ class TaskSwitcher(Node):
         self.goal_pose.header.frame_id = "odom"
         self.pose_goal_status = GoalStatus.STATUS_UNKNOWN
         self.return_to_task = True 
+        self.MAX_ATTEMPTS = 3
+        self.TIMEOUT = 15.0
+        self.attempts = 0
 
         ## SUBSCRIBERS 
         self.irobot_qos_profile = QoSProfile(
@@ -75,25 +77,14 @@ class TaskSwitcher(Node):
             self.dock_callback,
             self.irobot_qos_profile)
 
-        ## VEL SUBSCRIBERS
-        # self.task_vel_msg = Twist()
-        # self.task_vel_sub = self.create_subscription(
-        #     Twist, 
-        #     "/task/cmd_vel",
-        #     self.task_vel_callback,
-        #     1)
-        # self.teleop_vel_msg = Twist()
-        # self.teleop_vel_sub = self.create_subscription(
-        #     Twist, 
-        #     "/teleop/cmd_vel",
-        #     self.teleop_vel_callback,
-        #     1)
-        # self.nav_vel_msg = Twist()
-        # self.nav_vel_sub = self.create_subscription(
-        #     Twist, 
-        #     "/nav2/cmd_vel",
-        #     self.nav_vel_callback,
-        #     1)
+        # Subscribe to IMU 
+        self.imu_msg = Imu()
+        self.imu_sub = self.create_subscription(
+            Imu, 
+            "/imu",
+            self.imu_callback,
+            self.irobot_qos_profile)
+        self.IMU_LIMIT = 6.0
 
         ## TF LISTENER 
         self.tf_buffer = Buffer()
@@ -101,17 +92,6 @@ class TaskSwitcher(Node):
         self.reset_listener = TransformListener(self.tf_buffer, self)
 
         ## PUBLISHERS 
-        self.vel_msg = Twist()
-        self.vel_pub = self.create_publisher(
-            Twist, 
-            "/cmd_vel",
-            1
-        )
-        self.fallback_pub = self.create_publisher(
-            Pose, 
-            "/goal_pose",
-            1
-        )
         self.dock_lock_msg = Bool()
         self.dock_lock_msg.data = True
         self.dock_lock_pub = self.create_publisher(
@@ -135,6 +115,7 @@ class TaskSwitcher(Node):
         self.dock_action_client = ActionClient(self, DockServo, 'dock')
         self.navigate_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
+    # ACTIONS
     def send_undock(self):
         goal_msg = Undock.Goal()
         
@@ -148,39 +129,63 @@ class TaskSwitcher(Node):
         self.dock_action_client.wait_for_server()
 
         return self.dock_action_client.send_goal_async(goal_msg)
-   
-    def goal_response_callback(self, future):
-        print("IN GOAL RESPONSE")
-        goal_handle = future.result()
-        if not goal_handle.accepted:
+
+    # HANDLING RESET ACTION 
+    def reset_goal_response_callback(self, future):
+        self.goal_handle = future.result()
+        if not self.goal_handle.accepted:
             print('Goal rejected :(')
             return
-
         print('Goal accepted :)')
+        self.get_result_future = self.goal_handle.get_result_async()
+        self.get_result_future.add_done_callback(self.get_reset_result_callback)
 
-        self.get_result_future = goal_handle.get_result_async()
-        self.get_result_future.add_done_callback(self.get_result_callback)
+    def reset_cancel_response_callback(self, future):
+        print("IN CANCEL RESPONSE")
+        self.cancel_handle = future.result()
+        print('Cancel accepted :)')
+        self.attempts += 1
 
-    def feedback_callback(self, feedback_msg):
-        feedback = feedback_msg.feedback
-        # For now, no feedback
-
-    def get_result_callback(self, future):
+    def reset_feedback_callback(self, feedback_msg):
+        print("TIME: ", feedback_msg.feedback.navigation_time.sec)
+        print("NUM RECOVERIES: ", feedback_msg.feedback.number_of_recoveries)
+        if self.hazard_msg.detections: 
+            if self.hazard_msg.detections[0].type in [HazardDetection.BUMP, HazardDetection.CLIFF, HazardDetection.STALL]:
+                self.get_logger().info('Hazard detected: {0}'.format(self.hazard_msg.detections[0].type))
+                self.get_logger().info('Stopping current action')
+                try:
+                    self.cancel_goal_future = self.cancel_handle.cancel_goal_async()
+                    self.cancel_goal_future.add_done_callback(self.cancel_response_callback)
+                except:
+                    pass
+                if self.attempts < self.MAX_ATTEMPTS:
+                    self.current_task = "reset"
+                else:
+                    self.current_task = "do_task"
+        
+        if feedback_msg.feedback.navigation_time.sec >= self.TIMEOUT: 
+            self.get_logger().info('Goal timed out')
+            self.get_logger().info('Stopping current action')
+            self.cancel_goal_future = self.goal_handle.cancel_goal_async()
+            self.cancel_goal_future.add_done_callback(self.reset_cancel_response_callback)
+            if self.attempts < self.MAX_ATTEMPTS:
+                self.current_task = "reset"
+            else:
+                self.current_task = "do_task"
+        
+    def get_reset_result_callback(self, future):
         result = future.result().result
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info('Goal succeeded! Result: {0}'.format(result))
         else:
             self.get_logger().info('Goal failed with status: {0}'.format(status))
-
+        self.attempts = 0
         self.pose_goal_status = status
-        if self.dock_msg.dock_visible:
-            self.current_task = "dock"
-            self.return_to_task = False
         if self.return_to_task == True:
             self.current_task = "do_task"
 
-    def send_navigate_to_pose(self):
+    def send_navigate_to_pose_reset(self):
         goal_msg = NavigateToPose.Goal()
         self.pose_goal_status = GoalStatus.STATUS_EXECUTING
 
@@ -188,9 +193,80 @@ class TaskSwitcher(Node):
 
         self.navigate_to_pose_client.wait_for_server()
 
-        self.send_goal_future = self.navigate_to_pose_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)
-        self.send_goal_future.add_done_callback(self.goal_response_callback)
+        self.hazard_msg = HazardDetectionVector()
 
+        self.send_goal_future = self.navigate_to_pose_client.send_goal_async(goal_msg, feedback_callback=self.reset_feedback_callback)
+        self.send_goal_future.add_done_callback(self.reset_goal_response_callback)
+   
+
+    # HANDLING NAV_TO_DOCK ACTION 
+    def dock_goal_response_callback(self, future):
+        self.goal_handle = future.result()
+        if not self.goal_handle.accepted:
+            print('Goal rejected :(')
+            return
+
+        print('Goal accepted :)')
+
+        self.get_result_future = self.goal_handle.get_result_async()
+        self.get_result_future.add_done_callback(self.get_dock_result_callback)
+
+    def dock_cancel_response_callback(self, future):
+        print("IN CANCEL RESPONSE")
+        self.cancel_handle = future.result()
+
+        print('Cancel accepted :)')
+        self.attempts += 1
+
+    def dock_feedback_callback(self, feedback_msg):
+        print("TIME: ", feedback_msg.feedback.navigation_time.sec)
+        print("NUM RECOVERIES: ", feedback_msg.feedback.number_of_recoveries)
+        if self.hazard_msg.detections: 
+            if self.hazard_msg.detections[0].type in [HazardDetection.BUMP, HazardDetection.CLIFF, HazardDetection.STALL]:
+                self.get_logger().info('Hazard detected: {0}'.format(self.hazard_msg.detections[0].type))
+                self.get_logger().info('Stopping current action')
+                try:
+                    self.cancel_goal_future = self.cancel_handle.cancel_goal_async()
+                    self.cancel_goal_future.add_done_callback(self.dock_cancel_response_callback)
+                except:
+                    pass
+                if self.attempts < self.MAX_ATTEMPTS:
+                    self.current_task = "reset"
+                else:
+                    self.current_task = "nav_to_dock"
+        
+
+    def get_dock_result_callback(self, future):
+        result = future.result().result
+        status = future.result().status
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info('Goal succeeded! Result: {0}'.format(result))
+        else:
+            self.get_logger().info('Goal failed with status: {0}'.format(status))
+        self.attempts = 0
+        self.pose_goal_status = status
+        if self.dock_msg.dock_visible:
+            self.current_task = "dock"
+        else:
+            self.current_task = "nav_to_dock"
+            self.attempts += 1
+        if self.attempts > self.MAX_ATTEMPTS: 
+            self.current_task = "idle"
+
+    def send_navigate_to_pose_dock(self):
+        goal_msg = NavigateToPose.Goal()
+        self.pose_goal_status = GoalStatus.STATUS_EXECUTING
+
+        goal_msg.pose = self.goal_pose
+
+        self.navigate_to_pose_client.wait_for_server()
+
+        self.hazard_msg = HazardDetectionVector()
+
+        self.send_goal_future = self.navigate_to_pose_client.send_goal_async(goal_msg, feedback_callback=self.dock_feedback_callback)
+        self.send_goal_future.add_done_callback(self.dock_goal_response_callback)
+
+    # CALLBACKS
     def battery_callback(self, battery_msg): 
 
         self.battery_msg = battery_msg
@@ -239,7 +315,6 @@ class TaskSwitcher(Node):
             self.dock_lock_msg.data = False
             self.current_task = "undock"
 
-
         if self.current_task == "teleop" and self.joy_msg.buttons[5] == 0: 
             self.prev_task = self.current_task 
             self.current_task = "do_task"
@@ -251,18 +326,17 @@ class TaskSwitcher(Node):
     def dock_lock_callback(self):
         self.dock_lock_pub.publish(self.dock_lock_msg)
     
-    def task_vel_callback(self, vel_msg): 
+    def imu_callback(self, imu_msg):
+        self.imu_msg = imu_msg
+        imu_x = self.imu_msg.linear_acceleration.x
+        imu_y = self.imu_msg.linear_acceleration.y
+        imu_z = self.imu_msg.linear_acceleration.z
+        if abs(imu_x) > 4.0 or abs(imu_y) > 4.0 or abs(imu_z) > 4.0:
+            print("Robot has been bumped: ", imu_x, imu_y, imu_z)
+            if not self.dock_msg.is_docked and not self.dock_msg.dock_visible and self.current_task != "dock" and self.current_task != "idle":
+                self.prev_task = self.current_task
+                self.current_task = "reset"
 
-        self.task_vel_msg = vel_msg
-
-    def teleop_vel_callback(self, vel_msg): 
-
-        self.teleop_vel_msg = vel_msg 
-    
-    def nav_vel_callback(self, vel_msg):
-
-        self.nav_vel_msg = vel_msg
-    
     def tf_timer_callback(self):
 
         self.broadcast_src_frame = "odom"
@@ -298,7 +372,7 @@ class TaskSwitcher(Node):
         """
         Converts euler roll, pitch, yaw to quaternion (w in last place)
         quat = [x, y, z, w]
-        Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+        Below should be replaced when porting for ROS 2 Python tf_conversions is done.
         """
         cy = math.cos(yaw * 0.5)
         sy = math.sin(yaw * 0.5)
@@ -335,7 +409,7 @@ class TaskSwitcher(Node):
 
             if self.pose_goal_status != GoalStatus.STATUS_EXECUTING:
                 print("Not in dock, returning")
-                self.send_navigate_to_pose()
+                self.send_navigate_to_pose_dock()
 
         elif self.current_task == "dock":
             self.send_dock()
@@ -343,9 +417,9 @@ class TaskSwitcher(Node):
 
         elif self.current_task == "reset": 
             if not self.dock_msg.is_docked and self.return_to_task:
-                # self.goal_pose.header.frame_id = "reset"
-                # self.goal_pose.pose.position.x = -1.0
-                # self.send_navigate_to_pose()
+                self.goal_pose.header.frame_id = "reset"
+                self.goal_pose.pose.position.x = -1.0
+                self.send_navigate_to_pose_reset()
                 self.current_task = "do_task"
             else:
                 self.current_task = "idle"

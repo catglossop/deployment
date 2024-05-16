@@ -7,8 +7,6 @@ tmux new-session -d -s $session_name
 tmux selectp -t 0    # go back to the first pane
 tmux splitw -h -p 50 # split it into two halves
 
-
-
 # Run the task swticher for the fallback
 tmux select-pane -t 0
 tmux send-keys "source ~/create_ws/install/setup.bash" Enter
