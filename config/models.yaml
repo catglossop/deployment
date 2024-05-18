@@ -11,8 +11,8 @@ gnm:
   ckpt_path: "../model_weights/gnm_large.pth"
 
 nomad: 
-  config_path: "../../hierarchical_learning/hierarchical_learning/config/nomad.yaml"
-  ckpt_path: "../../hierarchical_learning/hierarchical_learning/model_weights/nomad.pth"
+  config_path: "config/nomad.yaml"
+  ckpt_path: "model_weights/nomad.pth"
 
 
 # add your own model configs here after saving the *.pth file to ../model_weight

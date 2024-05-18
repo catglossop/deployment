@@ -10,13 +10,13 @@ tmux splitw -h -p 50 # split it into two halves
 # Run the task swticher for the fallback
 tmux select-pane -t 0
 tmux send-keys "source ~/create_ws/install/setup.bash" Enter
-tmux send-keys "conda deactivate" Enter
+tmux send-keys "conda activate lifelong" Enter
 tmux send-keys "python /home/create/create_ws/src/deployment/deployment/task_switcher_mux.py" Enter
 
 # Run the orchestrator for the fallback
 tmux select-pane -t 1
 tmux send-keys "source ~/create_ws/install/setup.bash" Enter
-tmux send-keys "conda deactivate" Enter
+tmux send-keys "conda activate lifelong" Enter
 tmux send-keys "python /home/create/create_ws/src/deployment/deployment/orchestrator.py" Enter
 
 tmux select-pane -t 0

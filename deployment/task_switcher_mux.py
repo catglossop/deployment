@@ -99,6 +99,13 @@ class TaskSwitcher(Node):
             "/dock_lock", 
             1
         )
+        self.state_msg = String()
+        self.state_pub = self.create_publisher(
+            String, 
+            "/hierarchical_learning/state", 
+            1
+        ) 
+
         ## BROADCASTER 
         self.src_frame = "odom"
         self.target_frame = "reset"
@@ -109,6 +116,8 @@ class TaskSwitcher(Node):
         self.state_machine_timer = self.create_timer(self.update_period, self.state_machine_callback)
         self.tf_timer = self.create_timer(0.5, self.tf_timer_callback)
         self.dock_lock = self.create_timer(0.01, self.dock_lock_callback)
+        self.state_timer = self.create_timer(0.01, self.state_timer_callback)
+
 
         ## ACTION CLIENTS
         self.undock_action_client = ActionClient(self, Undock, 'undock')
@@ -332,7 +341,7 @@ class TaskSwitcher(Node):
         imu_y = self.imu_msg.linear_acceleration.y
         imu_z = self.imu_msg.linear_acceleration.z
         if abs(imu_x) > 4.0 or abs(imu_y) > 4.0 or abs(imu_z) > 4.0:
-            print("Robot has been bumped: ", imu_x, imu_y, imu_z)
+            print("Robot has been bumped: ", imu_x, imu                                                                                                                                                                                                                                                                                                                                                                                                                                              _y, imu_z)
             if not self.dock_msg.is_docked and not self.dock_msg.dock_visible and self.current_task != "dock" and self.current_task != "idle":
                 self.prev_task = self.current_task
                 self.current_task = "reset"
@@ -362,6 +371,10 @@ class TaskSwitcher(Node):
             self.reset_frame.header.frame_id = self.broadcast_src_frame
             self.reset_frame.child_frame_id = self.broadcast_target_frame
             self.reset_broadcaster.sendTransform(self.reset_frame)
+    
+    def state_timer_callback(self):
+        self.state_msg = self.current_task
+        self.state_pub.publish(self.state_msg)
 
             
     def state_machine_callback(self):
@@ -420,7 +433,6 @@ class TaskSwitcher(Node):
                 self.goal_pose.header.frame_id = "reset"
                 self.goal_pose.pose.position.x = -1.0
                 self.send_navigate_to_pose_reset()
-                self.current_task = "do_task"
             else:
                 self.current_task = "idle"
 

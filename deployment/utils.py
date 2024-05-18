@@ -18,8 +18,8 @@ from PIL import Image as PILImage
 from typing import List, Tuple, Dict, Optional
 
 # models
-from hierarchical_learning.models.nomad.nomad import NoMaD, DenseNetwork
-from hierarchical_learning.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
+from hierarchical_lifelong_learning.deployment.models.nomad.nomad import NoMaD, DenseNetwork
+from hierarchical_lifelong_learning.deployment.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 
 IMAGE_ASPECT_RATIO = (

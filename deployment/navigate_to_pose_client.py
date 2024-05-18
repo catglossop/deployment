@@ -6,11 +6,11 @@ from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
 from rclpy.node import Node   
 
-class NavigateToPoseClient(Node)
+class NavigateToPoseClient(Node):
 
     def __init__(self):
         super().__init__('nav_to_pose_action_client')
-        self._action_client = ActionClient(self, NavigateToPose 'navigate_to_pose')
+        self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
     def goal_response_callback(self, future):
         print("IN GOAL RESPONSE")
