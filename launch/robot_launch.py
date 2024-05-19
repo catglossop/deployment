@@ -25,15 +25,15 @@ def generate_launch_description():
         ]
 
         )
-    pkg_twist_mux = get_package_share_directory('twist_mux')
-    twist_mux_launch_file = PathJoinSubstitution(
-        [pkg_twist_mux, 'launch', 'twist_mux_launch.py']
-    )
-    twist_mux = IncludeLaunchDescription(
-                PythonLaunchDescriptionSource([twist_mux_launch_file]),
-                launch_arguments={
-                        'cmd_vel_out': 'cmd_vel',
-                    }.items())
+    # pkg_twist_mux = get_package_share_directory('twist_mux')
+    # twist_mux_launch_file = PathJoinSubstitution(
+    #     [pkg_twist_mux, 'launch', 'twist_mux_launch.py']
+    # )
+    # twist_mux = IncludeLaunchDescription(
+    #             PythonLaunchDescriptionSource([twist_mux_launch_file]),
+    #             launch_arguments={
+    #                     'cmd_vel_out': 'cmd_vel',
+    #                 }.items())
 
     pkg_irobot_create_description = get_package_share_directory('irobot_create_description')
     pkg_create3_common_bringup = get_package_share_directory('irobot_create_common_bringup')
@@ -66,7 +66,6 @@ def generate_launch_description():
             executable='usb_cam_node_exe',
             name='usb_cam',
             arguments=['--params-file', '/opt/ros/galactic/share/usb_cam/config/params.yaml']
-
         ),
         Node(
             package='deployment',
@@ -74,6 +73,6 @@ def generate_launch_description():
             name='teleop_utils_node',
             output='screen'),
         robot_description,
-        teleop_joy, 
-        twist_mux
+        teleop_joy,
+        # twist_mux
     ])

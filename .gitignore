@@ -1,4 +1,3 @@
 maps/*
-launch/__pycache__/
-deployment/__pycache__/
+**/__pycache__
 

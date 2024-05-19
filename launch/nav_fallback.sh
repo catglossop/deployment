@@ -14,18 +14,18 @@ tmux selectp -t 2
 
 # Launch sensors and robot description
 tmux select-pane -t 0
-tmux send-keys "source ~/create_ws/install/setup.bash" Enter
+tmux send-keys "source ~/create_ws_kyle/install/setup.bash" Enter
 tmux send-keys "ros2 launch foxglove_bridge foxglove_bridge_launch.xml" Enter
 
 # Launch sensors and robot description
 tmux select-pane -t 1
-tmux send-keys "source ~/create_ws/install/setup.bash" Enter
+tmux send-keys "source ~/create_ws_kyle/install/setup.bash" Enter
 tmux send-keys "ros2 service call /reset_pose irobot_create_msgs/ResetPose" Enter
 tmux send-keys "ros2 launch deployment robot_launch.py" Enter
 
 # Run the navigation stack
 tmux select-pane -t 2
-tmux send-keys "source ~/create_ws/install/setup.bash" Enter
+tmux send-keys "source ~/create_ws_kyle/install/setup.bash" Enter
 tmux send-keys "ros2 launch nav2_bringup bringup_launch.py params_file:=/home/create/create_ws/src/deployment/config/nav2_params.yaml map:=/home/create/create_ws/src/deployment/maps/rail_loop.yaml" Enter
 
 # Attach to the tmux session
