@@ -20,6 +20,9 @@ from tf2_ros import Buffer as TransformBuffer, TransformListener, TransformBroad
 import tf_transformations
 from tf2_geometry_msgs import do_transform_pose_stamped
 
+import cv2
+from cv_bridge import CvBridge
+
 from deployment import state_machine
 
 observation_format = {
@@ -38,7 +41,7 @@ observation_format = {
     "pose_std": tf.TensorSpec((6,), tf.float32, name="pose_std"),
 
     # State machine and action
-    "action_state": tf.TensorSpec((), tf.string, name="action_state"),
+    "action_state_source": tf.TensorSpec((), tf.string, name="action_state_source"),
     "last_action_linear": tf.TensorSpec((3,), tf.float32, name="last_action_linear"),
     "last_action_angular": tf.TensorSpec((3,), tf.float32, name="last_action_angular"),
 }
@@ -46,7 +49,7 @@ observation_format = {
 action_config = ActionConfig(
     port_number=1111,
     action_keys=["action_vw", "action_pose", "reset", "dock", "undock"],
-    observation_keys=list(observation_format.keys()) + ["latest_action"],
+    observation_keys=list(observation_format.keys()),
 )
 
 def transform_odometry_to_map(odometry_msg: nm.Odometry, tf_buffer):
@@ -94,8 +97,8 @@ class NavRobotActionServer(Node):
             "pose_std": np.zeros((6,), dtype=np.float32),
 
             "action_state_source": np.zeros((), dtype=str),
-            "last_linear_velocity": np.zeros((3,), dtype=str),
-            "last_angular_velocity": np.zeros((3,), dtype=str),
+            "last_action_linear": np.zeros((3,), dtype=str),
+            "last_action_angular": np.zeros((3,), dtype=str),
         }
 
         # ROS parameters
@@ -174,8 +177,8 @@ class NavRobotActionServer(Node):
         # Start running
         self.action_server.start(threaded=True)
     
-    def image_callback(self, image: sm.CompressedImage):
-        self._latest_obs["image"] = np.array(image.data, dtype=bytes)
+    def image_callback(self, image:sm.CompressedImage): # image: sm.CompressedImage): # LYDIA FIX 
+        self._latest_obs["image"] = bytes(image.data)
     
     def amcl_pose_callback(self, pose: gm.PoseWithCovarianceStamped):
         self._latest_obs["pose_std"] = np.sqrt(np.diag(np.array(pose.pose.covariance).reshape((6, 6)))).astype(np.float32)
