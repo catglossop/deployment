@@ -39,8 +39,8 @@ observation_format = {
 
     # State machine and action
     "action_state": tf.TensorSpec((), tf.string, name="action_state"),
-    "last_action_vw": tf.TensorSpec((2,), tf.float32, name="last_action_vw"),
-    "last_action_pose": tf.TensorSpec((3,), tf.float32, name="last_action_pose"),
+    "last_action_linear": tf.TensorSpec((3,), tf.float32, name="last_action_linear"),
+    "last_action_angular": tf.TensorSpec((3,), tf.float32, name="last_action_angular"),
 }
 
 action_config = ActionConfig(
@@ -361,8 +361,8 @@ class NavRobotActionServer(Node):
 
     def republish(self):
         self._latest_obs["action_state_source"] = type(self.state_machine.current_state).__name__
-        self._latest_obs["last_linear_velocity"] = np.array([self.state_machine.current_state.twist[0], 0.0, 0.0], dtype=np.float32)
-        self._latest_obs["last_angular_velocity"] = np.array([0.0, 0.0, self.state_machine.current_state.twist[1]], dtype=np.float32)
+        self._latest_obs["last_action_linear"] = np.array([self.state_machine.current_state.twist[0], 0.0, 0.0], dtype=np.float32)
+        self._latest_obs["last_action_angular"] = np.array([0.0, 0.0, self.state_machine.current_state.twist[1]], dtype=np.float32)
 
         twist_msg = gm.Twist()
         twist_msg.linear.x = float(self.state_machine.current_state.twist[0])
