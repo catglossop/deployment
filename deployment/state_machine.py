@@ -2,7 +2,7 @@ from abc import ABC
 import logging
 from typing import Tuple, TypeVar, Union
 from asyncio import Future
-from typing import Optional, Type
+from typing import Optional, Type, Dict
 
 import numpy as np
 
@@ -13,6 +13,7 @@ import geometry_msgs.msg as gm
 from nav2_msgs.action import NavigateToPose
 from tf2_ros import TransformBroadcaster, TransformException
 from tf2_ros.buffer import Buffer as TransformBuffer
+import irobot_create_msgs.action as create_action
 
 
 TwistType = Union[np.ndarray, gm.Twist, gm.TwistStamped]
@@ -28,7 +29,7 @@ def _unstamp(
     elif isinstance(msg, np.ndarray):
         return msg, current_time
     elif msg is None:
-        return np.zeros((2, 1)), current_time
+        return np.zeros((2,)), current_time
     else:
         raise TypeError(f"Unknown type {type(msg)}")
 
@@ -57,7 +58,7 @@ class BaseState(ABC):
         else:
             return (current_time - self.last_updated_time).nanoseconds > self.timeout * 1e9
 
-    def tick(self, current_time: RosTime):
+    def tick(self, current_time: RosTime, current_obs: Dict):
         if self.expired(current_time):
             return IdleState(current_time)
         else:
@@ -108,11 +109,32 @@ class TwistTaskState(BaseState):
 
 
 class PoseTaskState(BaseState):
-    def __init__(self, start_time: RosTime, initial_pose: np.ndarray):
-        raise NotImplementedError
+    def __init__(self, start_time: RosTime, initial_pose: np.ndarray, robot_frame: str, goal_frame: str):
+        super().__init__(start_time)
+
+        self.goal_pose = initial_pose
+        self.tf_buffer = tf_buffer
+        self.robot_frame = robot_frame
+        self.goal_frame = goal_frame
 
     def update(self, *, current_time: RosTime, pose: np.ndarray):
-        pass
+        self.current_pose_goal = pose
+        self.last_updated_time = current_time
+
+    def tick(self, current_time: RosTime, current_obs: Dict):
+        # Find the goal position relative to the current pose
+        current_pose = current_obs["odom_pose"]
+        goal_vector = goal_pose[:2] - current_pose[:2]
+        goal_vector = np.array([
+            [np.cos(current_pose[2]), -np.sin(current_pose[2])]
+            [np.sin(current_pose[2]), np.cos(current_pose[2])]
+        ]) @ goal_vector
+
+        print(f"Pose tracking with goal vector {goal_vector}")
+
+        # Tick the PID controller to update the twist
+        self.twist = np.zeros((2,))
+        return super().tick(current_time)
 
     @property
     def priority(self):
@@ -139,7 +161,7 @@ class RosActionState(BaseState):
         clock,
         action_client: RosActionClient,
         goal,
-        initial_twist: np.ndarray = np.zeros((2, 1)),
+        initial_twist: np.ndarray = np.zeros((2,)),
     ):
         super().__init__(start_time, initial_twist=initial_twist)
 
@@ -165,7 +187,8 @@ class RosActionState(BaseState):
         goal_result_future.add_done_callback(self.goal_result_callback)
 
     def feedback_callback(self, feedback):
-        pass
+        if not self.done:
+            self.last_updated_time = self.clock.now()
 
     def goal_result_callback(self, future: Future):
         self.done = True
@@ -185,7 +208,7 @@ class IRobotActionState(RosActionState):
 
     @property
     def timeout(self):
-        return 0.25
+        return 10
 
 
 class Nav2ActionState(RosActionState):
@@ -231,6 +254,44 @@ class DoResetState(Nav2ActionState):
         return 0.25
 
 
+class IRobotDockState(IRobotActionState):
+    def __init__(self, start_time: RosTime, action_client: RosActionClient, clock):
+        # Issue a dock command
+        super().__init__(start_time, clock, action_client, create_action.DockServo.Goal())
+
+    @property
+    def priority(self):
+        return 50
+    
+    @property
+    def timeout(self):
+        return 10
+
+
+class IRobotUndockState(IRobotActionState):
+    def __init__(self, start_time: RosTime, action_client: RosActionClient, clock):
+        # Issue a dock command
+        super().__init__(start_time, clock, action_client, create_action.Undock.Goal())
+
+    @property
+    def priority(self):
+        return 50
+    
+    @property
+    def timeout(self):
+        return 10
+
+
+class Nav2DockState(RosActionState):
+    def tick(self, current_time: RosTime, current_obs: Dict):
+        if self.done:
+            return IRobotDockState()
+        elif self.expired(current_time):
+            return IdleState(current_time)
+        else:
+            return self
+
+
 T = TypeVar("T", bound=BaseState)
 
 
@@ -240,6 +301,12 @@ class StateMachine:
     def __init__(self, node: Node):
         self.clock = node.get_clock()
         self.current_state = IdleState(self.clock.now())
+    
+    def _change_state(self, new_state: BaseState):
+        print(f"STATE CHANGE {self.current_state} -> {new_state}")
+        if self.current_state is not None:
+            self.current_state.cancel()
+        self.current_state = new_state
 
     def accept_state(self, new_state: BaseState):
         # Make sure the new and previous states aren't the same type
@@ -255,8 +322,7 @@ class StateMachine:
         )
 
         if should_accept:
-            self.current_state.cancel()
-            self.current_state = new_state
+            self._change_state(new_state)
 
         return should_accept
 
@@ -272,10 +338,11 @@ class StateMachine:
         else:
             return False
 
-    def tick(self):
+    def tick(self, current_obs: Dict):
         now = self.clock.now()
-        self.current_state = self.current_state.tick(now)
+        new_state = self.current_state.tick(now, current_obs)
+        if self.current_state != new_state:
+            self._change_state(new_state)
 
         if self.current_state is None or self.current_state.expired(now):
-            self.current_state.cancel()
-            self.current_state = IdleState(self.clock.now())
+            self._change_state(IdleState(self.clock.now()))
